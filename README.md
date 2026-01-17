@@ -21,4 +21,4 @@
 <img width="1728" height="879" alt="image" src="https://github.com/user-attachments/assets/624f5d40-9062-4c24-a34b-183a479374f4" />
 
 ### 따릉이 스테이션 클릭시
-<img width="1728" height="882" alt="image" src="https://github.com/user-attachments/assets/267c2d0e-1ba6-40ea-ac69-daaec5ff5679" />
+<img width="1728" height="879" alt="image" src="https://github.com/user-attachments/assets/8f0e274c-1f05-4734-b558-bc8b50c60db9" />
