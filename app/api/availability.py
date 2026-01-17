@@ -183,6 +183,33 @@ async def get_recommendation(
         raise HTTPException(status_code=500, detail=f"추천 생성 중 오류 발생: {str(e)}")
 
 
+@router.get("/{station_id}/weekly")
+async def get_weekly_heatmap(
+    station_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    주간 히트맵 조회 (월~일, 24시간)
+    
+    특정 대여소의 요일별/시간별 전체 가용성 데이터를 조회합니다.
+    4주간의 데이터를 기반으로 평균을 계산합니다.
+    
+    Returns:
+        - station_id: 대여소 ID
+        - station_name: 대여소 이름
+        - capacity: 거치대 수
+        - day_names: 요일 이름 목록 ["월요일", ..., "일요일"]
+        - weekly_data: 요일별(0~6) 24시간 데이터
+    """
+    try:
+        weekly_data = heatmap_service.get_weekly_heatmap(db, station_id)
+        return weekly_data
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"주간 히트맵 조회 중 오류 발생: {str(e)}")
+
+
 @router.get("/heatmap/all")
 async def get_all_stations_heatmap(
     hour: int = Query(..., ge=0, le=23, description="시간 (0~23)"),

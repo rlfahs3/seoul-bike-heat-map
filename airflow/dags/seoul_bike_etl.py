@@ -37,7 +37,7 @@ dag = DAG(
     dag_id='seoul_bike_etl',
     default_args=default_args,
     description='서울 따릉이 데이터 수집 및 처리',
-    schedule_interval='*/5 * * * *',  # 5분마다
+    schedule_interval='*/10 * * * *',  # 10분마다 (데이터량 관리)
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['seoul', 'bike', 'etl', 'heatmap'],
@@ -201,11 +201,11 @@ def task_calculate_stats(**context):
             station_id,
             HOUR(recorded_at) as hour_of_day,
             WEEKDAY(recorded_at) as day_of_week,
-            LEAST(GREATEST(AVG(availability_rate), 0), 100) as avg_availability,
+            GREATEST(AVG(availability_rate), 0) as avg_availability,  -- 100% 초과 허용
             AVG(parking_bike_count) as avg_parking_count,
             COUNT(*) as sample_count
         FROM bike_status_history
-        WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 28 DAY)
         GROUP BY station_id, HOUR(recorded_at), WEEKDAY(recorded_at)
         ON DUPLICATE KEY UPDATE
             avg_availability = VALUES(avg_availability),
@@ -223,6 +223,42 @@ def task_calculate_stats(**context):
     logger.info(f"Statistics updated: {stats_count} records")
     
     return {'stats_count': stats_count}
+
+
+def task_cleanup_old_data(**context):
+    """
+    Task 5: 오래된 데이터 정리
+    - 28일(4주) 이상 된 bike_status_history 데이터 삭제
+    - 통계(bike_availability_stats)는 유지
+    """
+    mysql_hook = MySqlHook(mysql_conn_id='mysql_default')
+    
+    # 삭제 전 카운트
+    before_count = mysql_hook.get_first(
+        "SELECT COUNT(*) FROM bike_status_history WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 28 DAY)"
+    )
+    rows_to_delete = before_count[0] if before_count else 0
+    
+    if rows_to_delete > 0:
+        logger.info(f"🗑️ Cleaning up {rows_to_delete} old records (older than 28 days/4 weeks)...")
+        
+        # 28일(4주) 이상 된 데이터 삭제
+        mysql_hook.run("""
+            DELETE FROM bike_status_history 
+            WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 28 DAY)
+        """)
+        
+        logger.info(f"✅ Deleted {rows_to_delete} old records")
+    else:
+        logger.info("📭 No old records to clean up")
+    
+    # 현재 테이블 상태
+    current_count = mysql_hook.get_first("SELECT COUNT(*) FROM bike_status_history")
+    
+    return {
+        'deleted_count': rows_to_delete,
+        'remaining_count': current_count[0] if current_count else 0
+    }
 
 
 # ============================================
@@ -257,11 +293,18 @@ stats_task = PythonOperator(
     dag=dag,
 )
 
+cleanup_task = PythonOperator(
+    task_id='cleanup_old_data',
+    python_callable=task_cleanup_old_data,
+    provide_context=True,
+    dag=dag,
+)
+
 # ============================================
 # Task 의존성 설정
 # ============================================
 
-fetch_task >> process_task >> save_task >> stats_task
+fetch_task >> process_task >> save_task >> stats_task >> cleanup_task
 
 # DAG 구조:
-# [API 호출] → [데이터 전처리] → [MySQL 저장] → [통계 계산]
+# [API 호출] → [데이터 전처리] → [MySQL 저장] → [통계 계산] → [데이터 정리]
