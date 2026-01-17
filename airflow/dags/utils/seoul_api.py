@@ -61,20 +61,30 @@ class SeoulBikeAPI:
     def fetch_all_bikes(self, batch_size: int = 1000) -> List[Dict]:
         """
         모든 따릉이 대여소 정보 조회 (페이징 처리)
-        
+
         Args:
             batch_size: 한 번에 가져올 개수 (최대 1000)
             
         Returns:
             전체 대여소 정보 리스트
         """
+        import time
+        
         all_bikes = []
         start_index = 1
+        batch_num = 0
+        
+        logger.info("=" * 50)
+        logger.info("Starting to fetch ALL bike stations with pagination")
+        logger.info(f"Batch size: {batch_size}")
+        logger.info("=" * 50)
         
         while True:
+            batch_num += 1
             end_index = start_index + batch_size - 1
             
             try:
+                logger.info(f"📥 Batch #{batch_num}: Fetching {start_index} ~ {end_index}")
                 data = self.fetch_bike_list(start_index, end_index)
                 
                 # rentBikeStatus.row에 실제 데이터가 있음
@@ -83,28 +93,38 @@ class SeoulBikeAPI:
                     break
                 
                 rent_bike_status = data["rentBikeStatus"]
-                
-                # list_total_count로 전체 개수 확인
-                total_count = rent_bike_status.get("list_total_count", 0)
-                
                 rows = rent_bike_status.get("row", [])
+                fetched_count = len(rows)
+                
                 if not rows:
+                    logger.info(f"📭 No more rows returned at batch #{batch_num}. Stopping.")
                     break
                     
                 all_bikes.extend(rows)
-                logger.info(f"Fetched {len(rows)} stations (total: {len(all_bikes)}/{total_count})")
+                logger.info(f"✅ Batch #{batch_num}: Got {fetched_count} stations | Total so far: {len(all_bikes)}")
                 
-                # 더 이상 데이터가 없으면 종료
-                if len(all_bikes) >= total_count or len(rows) < batch_size:
+                if fetched_count < batch_size:
+                    logger.info(f"🎉 Last batch detected (got {fetched_count} < {batch_size}). All stations fetched!")
                     break
-                    
+                
+                # 다음 배치로 이동
                 start_index = end_index + 1
                 
+                # API 부하 방지를 위한 짧은 대기
+                time.sleep(0.3)
+                
             except Exception as e:
-                logger.error(f"Error fetching batch {start_index}-{end_index}: {e}")
+                logger.error(f"❌ Error fetching batch #{batch_num} ({start_index}-{end_index}): {e}")
+                # 에러 발생해도 이미 가져온 데이터는 유지
+                if all_bikes:
+                    logger.warning(f"Returning partial data: {len(all_bikes)} stations")
                 break
         
-        logger.info(f"Total fetched: {len(all_bikes)} stations")
+        logger.info("=" * 50)
+        logger.info(f"📈 PAGINATION COMPLETE!")
+        logger.info(f"   Total batches: {batch_num}")
+        logger.info(f"   Total stations fetched: {len(all_bikes)}")
+        logger.info("=" * 50)
         return all_bikes
 
 
