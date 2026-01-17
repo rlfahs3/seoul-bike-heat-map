@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS bike_availability_stats (
     station_id VARCHAR(50) NOT NULL COMMENT '대여소 ID',
     hour_of_day INT NOT NULL COMMENT '시간대 (0-23)',
     day_of_week INT NOT NULL COMMENT '요일 (0=월요일, 6=일요일)',
-    avg_availability DECIMAL(5, 2) NOT NULL DEFAULT 0.00 COMMENT '평균 대여 가능율 (%)',
+    avg_availability DECIMAL(7, 2) NOT NULL DEFAULT 0.00 COMMENT '평균 대여 가능율 (%, 100% 초과 가능)',
     avg_parking_count DECIMAL(5, 2) NOT NULL DEFAULT 0.00 COMMENT '평균 주차 자전거 수',
     sample_count INT NOT NULL DEFAULT 0 COMMENT '데이터 수집 횟수',
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '마지막 업데이트',
