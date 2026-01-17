@@ -2,10 +2,13 @@
 따릉이 데이터 전처리 유틸리티
 """
 from typing import Dict, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
+
+# 한국 표준시 (KST = UTC+9)
+KST = timezone(timedelta(hours=9))
 
 
 def clean_station_data(raw_data: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
@@ -22,7 +25,10 @@ def clean_station_data(raw_data: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     """
     stations = []
     status_history = []
-    recorded_at = datetime.now()
+    # 한국 시간 (UTC+9) 사용 - MySQL 호환을 위해 naive datetime으로 변환
+    recorded_at = datetime.now(KST).replace(tzinfo=None)
+    
+    logger.info(f"📅 Recording time (KST): {recorded_at.strftime('%Y-%m-%d %H:%M:%S')}")
     
     for item in raw_data:
         try:
