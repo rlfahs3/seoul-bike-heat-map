@@ -93,9 +93,59 @@
         margin-right: 5px;
     }
     
+    /* 요일 선택 버튼 스타일 */
+    .day-selector {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 20px;
+    }
+    
+    .day-btn {
+        padding: 8px 16px;
+        border: 2px solid #28a745;
+        border-radius: 20px;
+        background: white;
+        color: #28a745;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .day-btn:hover {
+        background: #e8f5e9;
+    }
+    
+    .day-btn.active {
+        background: #28a745;
+        color: white;
+    }
+    
+    .day-btn.today {
+        border-color: #ffc107;
+        position: relative;
+    }
+    
+    .day-btn.today::after {
+        content: "오늘";
+        position: absolute;
+        top: -8px;
+        right: -5px;
+        font-size: 0.6rem;
+        background: #ffc107;
+        color: black;
+        padding: 1px 4px;
+        border-radius: 4px;
+    }
+    
     @media (max-width: 768px) {
         .heatmap-container {
             grid-template-columns: repeat(12, 1fr);
+        }
+        
+        .day-btn {
+            padding: 6px 10px;
+            font-size: 0.85rem;
         }
     }
 </style>
@@ -212,10 +262,24 @@
                 </div>
             </div>
             
-            <!-- 히트맵 -->
+            <!-- 요일 선택 -->
             <h5 class="mb-3">
-                <i class="bi bi-calendar-week"></i> 시간대별 대여 가능성
+                <i class="bi bi-calendar-week"></i> 요일별 시간대 대여 가능성
+                <small class="text-muted">(4주간 평균 데이터)</small>
             </h5>
+            
+            <div class="day-selector" id="daySelector">
+                <button class="day-btn" data-day="0">월</button>
+                <button class="day-btn" data-day="1">화</button>
+                <button class="day-btn" data-day="2">수</button>
+                <button class="day-btn" data-day="3">목</button>
+                <button class="day-btn" data-day="4">금</button>
+                <button class="day-btn" data-day="5">토</button>
+                <button class="day-btn" data-day="6">일</button>
+                <button class="day-btn active" data-day="all">전체 평균</button>
+            </div>
+            
+            <!-- 히트맵 -->
             <div class="heatmap-container" id="heatmapContainer">
                 <!-- 24시간 히트맵이 동적으로 채워집니다 -->
             </div>
@@ -252,6 +316,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<!-- 캐시 문제 수정 v=2 -->
-<script src="{{ url_for('static', path='/js/heatmap.js') }}?v=2"></script>
+<!-- 요일별 히트맵 기능 추가 v=3 -->
+<script src="{{ url_for('static', path='/js/heatmap.js') }}?v=5"></script>
 {% endblock %}

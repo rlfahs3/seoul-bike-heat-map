@@ -2,10 +2,17 @@
 
 // 전역 변수
 let currentStationId = null;
+let currentDayOfWeek = null;  // null = 전체 평균, 0~6 = 요일별
+let weeklyHeatmapData = null; // 주간 데이터 캐시
+let originalRecommendation = ''; // 원본 추천 메시지 저장
+
+// 요일 이름
+const DAY_NAMES = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일'];
 
 // 페이지 로드 시 초기화
 document.addEventListener('DOMContentLoaded', function() {
     initializeEventListeners();
+    initializeDaySelector();
 });
 
 // 이벤트 리스너 초기화
@@ -19,8 +26,29 @@ function initializeEventListeners() {
             searchStations();
         }
     });
+}
+
+// 요일 선택 버튼 초기화
+function initializeDaySelector() {
+    const selector = document.getElementById('daySelector');
+    if (!selector) return;
     
-    // 자동 검색 기능 제거됨 - 엔터 또는 검색 버튼으로만 검색
+    // 오늘 요일 표시 (0=일요일이지만, 우리는 0=월요일로 사용)
+    const today = new Date().getDay();
+    const todayIndex = today === 0 ? 6 : today - 1; // JavaScript: 0=일요일 → 우리: 6=일요일
+    
+    const dayBtns = selector.querySelectorAll('.day-btn');
+    dayBtns.forEach(btn => {
+        const day = btn.dataset.day;
+        
+        // 오늘 표시
+        if (day !== 'all' && parseInt(day) === todayIndex) {
+            btn.classList.add('today');
+        }
+        
+        // 클릭 이벤트
+        btn.addEventListener('click', () => handleDaySelect(btn, day));
+    });
 }
 
 // 로딩 표시
@@ -105,9 +133,76 @@ function displaySearchResults(stations) {
     document.getElementById('resultSection').style.display = 'none';
 }
 
+// 요일 선택 핸들러
+async function handleDaySelect(btn, day) {
+    // 버튼 활성화 상태 변경
+    document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    
+    // 요일 설정
+    currentDayOfWeek = day === 'all' ? null : parseInt(day);
+    
+    // 데이터가 있으면 히트맵 업데이트
+    if (currentStationId) {
+        await loadHeatmapByDay(currentStationId, currentDayOfWeek);
+    }
+}
+
+// 요일별 히트맵 로드
+async function loadHeatmapByDay(stationId, dayOfWeek) {
+    showLoading();
+    
+    try {
+        let url = `/api/availability/${stationId}`;
+        if (dayOfWeek !== null) {
+            url += `?day_of_week=${dayOfWeek}`;
+        }
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.detail || '데이터를 불러올 수 없습니다.');
+        }
+        
+        // 히트맵 업데이트
+        updateHeatmap(data.hourly_availability);
+        updateHourlyTable(data.hourly_availability);
+        
+        // 추천 메시지 업데이트 (요일 정보 포함)
+        const dayText = dayOfWeek !== null ? DAY_NAMES[dayOfWeek] : '전체';
+        updateDayInfo(dayText);
+        
+    } catch (error) {
+        console.error('히트맵 조회 오류:', error);
+    } finally {
+        hideLoading();
+    }
+}
+
+// 요일 정보 업데이트 (추천 카드에 표시)
+function updateDayInfo(dayText) {
+    const recommendText = document.getElementById('recommendationText');
+    if (recommendText) {
+        if (dayText !== '전체') {
+            // 원본 추천 메시지에 요일 추가
+            recommendText.textContent = `[${dayText}] ${originalRecommendation}`;
+        } else {
+            // 전체 평균일 때는 원본 메시지만 표시
+            recommendText.textContent = originalRecommendation;
+        }
+    }
+}
+
 // 스테이션 선택
 async function selectStation(stationId, stationName) {
     currentStationId = stationId;
+    currentDayOfWeek = null; // 초기값은 전체 평균
+    
+    // 요일 선택 버튼 초기화
+    document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
+    const allBtn = document.querySelector('.day-btn[data-day="all"]');
+    if (allBtn) allBtn.classList.add('active');
     
     showLoading();
     
@@ -157,31 +252,39 @@ function updateRealtimeInfo(realtime) {
     
     const progressBar = document.getElementById('realtimeProgress');
     const percentage = Math.round(realtime.ratio * 100);
-    progressBar.style.width = `${percentage}%`;
+    progressBar.style.width = `${Math.min(percentage, 100)}%`;
     progressBar.textContent = `${percentage}%`;
     
     // 색상 업데이트
     progressBar.className = 'progress-bar';
-    switch (realtime.status) {
-        case 'high':
-            progressBar.classList.add('bg-success');
-            break;
-        case 'medium':
-            progressBar.classList.add('bg-warning');
-            break;
-        case 'low':
-            progressBar.classList.add('bg-orange');
-            progressBar.style.backgroundColor = '#fd7e14';
-            break;
-        case 'critical':
-            progressBar.classList.add('bg-danger');
-            break;
+    
+    // 100% 초과 시 특별 표시
+    if (percentage > 100) {
+        progressBar.classList.add('bg-info');
+        progressBar.textContent = `${percentage}% (초과)`;
+    } else {
+        switch (realtime.status) {
+            case 'high':
+                progressBar.classList.add('bg-success');
+                break;
+            case 'medium':
+                progressBar.classList.add('bg-warning');
+                break;
+            case 'low':
+                progressBar.classList.add('bg-orange');
+                progressBar.style.backgroundColor = '#fd7e14';
+                break;
+            case 'critical':
+                progressBar.classList.add('bg-danger');
+                break;
+        }
     }
 }
 
 // 추천 업데이트
 function updateRecommendation(recommendation) {
-    document.getElementById('recommendationText').textContent = recommendation || '추천 정보가 없습니다.';
+    originalRecommendation = recommendation || '추천 정보가 없습니다.';  // 원본 저장
+    document.getElementById('recommendationText').textContent = originalRecommendation;
 }
 
 // 히트맵 업데이트
@@ -208,6 +311,11 @@ function updateHourlyTable(hourlyData) {
     let html = '';
     
     hourlyData.forEach(hour => {
+        const percentage = Math.round(hour.avg_ratio * 100);
+        const percentageDisplay = percentage > 100 
+            ? `<span class="text-info fw-bold">${percentage}%</span>` 
+            : `${percentage}%`;
+        
         html += `
             <tr>
                 <td><strong>${hour.hour}시</strong></td>
@@ -217,7 +325,7 @@ function updateHourlyTable(hourlyData) {
                     </span>
                 </td>
                 <td>${hour.avg_available.toFixed(1)}대</td>
-                <td>${Math.round(hour.avg_ratio * 100)}%</td>
+                <td>${percentageDisplay}</td>
             </tr>
         `;
     });

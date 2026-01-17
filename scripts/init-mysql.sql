@@ -29,13 +29,13 @@ CREATE TABLE IF NOT EXISTS bike_status_history (
     station_id VARCHAR(50) NOT NULL COMMENT '대여소 ID',
     parking_bike_count INT NOT NULL DEFAULT 0 COMMENT '현재 주차된 자전거 수',
     rack_total_count INT NOT NULL DEFAULT 0 COMMENT '거치대 총 개수',
-    availability_rate DECIMAL(5, 2) GENERATED ALWAYS AS (
+    availability_rate DECIMAL(7, 2) GENERATED ALWAYS AS (
         CASE 
             WHEN rack_total_count > 0 
             THEN (parking_bike_count / rack_total_count * 100)
             ELSE 0 
         END
-    ) STORED COMMENT '대여 가능율 (자동 계산)',
+    ) STORED COMMENT '대여 가능율 (자동 계산, 100% 초과 가능)',
     recorded_at TIMESTAMP NOT NULL COMMENT '데이터 수집 시각',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '생성일시',
     
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS bike_availability_stats (
     
     CHECK (hour_of_day >= 0 AND hour_of_day <= 23),
     CHECK (day_of_week >= 0 AND day_of_week <= 6),
-    CHECK (avg_availability >= 0 AND avg_availability <= 100)
+    CHECK (avg_availability >= 0)  -- 100% 초과 허용
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='시간대별 대여 가능율 통계 (히트맵 데이터)';
 
 -- ============================================

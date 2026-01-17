@@ -303,6 +303,114 @@ class HeatmapService:
             raise
     
     
+    def get_weekly_heatmap(
+        self,
+        db: Session,
+        station_id: str
+    ) -> Dict[str, Any]:
+        """
+        요일별 전체 히트맵 데이터 조회 (월~일, 24시간)
+        
+        Args:
+            db: 데이터베이스 세션
+            station_id: 대여소 ID
+        
+        Returns:
+            요일별 히트맵 데이터 (7일 x 24시간)
+        """
+        try:
+            # 대여소 기본 정보 조회
+            station_query = text("""
+                SELECT station_name, rack_total_count
+                FROM bike_stations
+                WHERE station_id = :station_id
+            """)
+            station_result = db.execute(station_query, {"station_id": station_id})
+            station_row = station_result.fetchone()
+            
+            if not station_row:
+                raise ValueError(f"대여소를 찾을 수 없습니다: {station_id}")
+            
+            station_name = station_row[0]
+            capacity = int(station_row[1])
+            
+            # 모든 요일/시간대 통계 조회
+            stats_query = text("""
+                SELECT 
+                    day_of_week,
+                    hour_of_day,
+                    avg_availability,
+                    avg_parking_count,
+                    sample_count,
+                    last_updated
+                FROM bike_availability_stats
+                WHERE station_id = :station_id
+                ORDER BY day_of_week, hour_of_day
+            """)
+            stats_result = db.execute(stats_query, {"station_id": station_id})
+            
+            # 요일별 데이터 구조 초기화
+            day_names = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+            weekly_data = {day: [] for day in range(7)}
+            
+            # 조회된 데이터를 딕셔너리로 변환
+            stats_dict = {}
+            for row in stats_result.fetchall():
+                day = row[0]
+                hour = row[1]
+                if day not in stats_dict:
+                    stats_dict[day] = {}
+                stats_dict[day][hour] = {
+                    "avg_availability": float(row[2]),
+                    "avg_parking_count": float(row[3]),
+                    "sample_count": int(row[4]),
+                    "last_updated": row[5]
+                }
+            
+            # 7일 x 24시간 데이터 생성
+            for day in range(7):
+                for hour in range(24):
+                    if day in stats_dict and hour in stats_dict[day]:
+                        stats = stats_dict[day][hour]
+                        avg_ratio = stats["avg_availability"] / 100.0
+                        status = get_availability_status(avg_ratio)
+                        
+                        weekly_data[day].append({
+                            "hour": hour,
+                            "avg_available": round(stats["avg_parking_count"], 1),
+                            "avg_ratio": round(avg_ratio, 3),
+                            "status": status,
+                            "status_label": get_status_label(status),
+                            "status_emoji": get_status_emoji(status),
+                            "sample_count": stats["sample_count"]
+                        })
+                    else:
+                        # 데이터 없는 시간대
+                        weekly_data[day].append({
+                            "hour": hour,
+                            "avg_available": 0.0,
+                            "avg_ratio": 0.0,
+                            "status": "unknown",
+                            "status_label": "데이터 없음",
+                            "status_emoji": "⬜",
+                            "sample_count": 0
+                        })
+            
+            return {
+                "station_id": station_id,
+                "station_name": station_name,
+                "capacity": capacity,
+                "day_names": day_names,
+                "weekly_data": weekly_data
+            }
+            
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"주간 히트맵 조회 실패 (station_id={station_id}): {e}")
+            raise
+    
+
     def generate_recommendation(
         self,
         hourly_data: List[Dict[str, Any]],
