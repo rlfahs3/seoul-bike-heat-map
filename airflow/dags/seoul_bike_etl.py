@@ -29,7 +29,7 @@ default_args = {
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 3,
-    'retry_delay': timedelta(minutes=1),
+    'retry_delay': timedelta(minutes=2),
     'execution_timeout': timedelta(minutes=10),
 }
 
@@ -41,6 +41,8 @@ dag = DAG(
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['seoul', 'bike', 'etl', 'heatmap'],
+    max_active_runs=1,
+    concurrency=2,
 )
 
 # ============================================
