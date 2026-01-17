@@ -8,11 +8,13 @@ services:
   mysql:
     image: mysql:8.0
     container_name: seoul-bike-mysql
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: cksgh970216!
       MYSQL_DATABASE: seoul_bike
       MYSQL_USER: hch16
       MYSQL_PASSWORD: cksgh970216!
+      MYSQL_INNODB_BUFFER_POOL_SIZE: 128M
     ports:
       - "3306:3306"
     volumes:
@@ -20,22 +22,37 @@ services:
       - ./scripts/init-mysql.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - bike-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    command: >
+      --innodb-buffer-pool-size=128M
+      --max-connections=50
+      --innodb-log-buffer-size=8M
+      --key-buffer-size=8M
+      --tmp-table-size=16M
+      --max-heap-table-size=16M
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pcksgh970216!"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
     container_name: seoul-bike-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
     networks:
       - bike-network
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 64mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -49,6 +66,7 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: seoul-bike-zookeeper
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -89,6 +107,7 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: seoul-bike-kafka-ui
+    restart: unless-stopped
     depends_on:
       - kafka
     ports:
@@ -107,6 +126,7 @@ services:
   airflow-postgres:
     image: postgres:15-alpine
     container_name: seoul-bike-airflow-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -147,6 +167,7 @@ services:
   airflow-webserver:
     image: apache/airflow:2.8.0
     container_name: seoul-bike-airflow-webserver
+    restart: unless-stopped
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -186,6 +207,7 @@ services:
   airflow-scheduler:
     image: apache/airflow:2.8.0
     container_name: seoul-bike-airflow-scheduler
+    restart: unless-stopped
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -212,6 +234,54 @@ services:
     networks:
       - bike-network
     command: scheduler
+
+  # ============================================
+  # FastAPI (웹 애플리케이션)
+  # ============================================
+  
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seoul-bike-fastapi
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # 서버 설정
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DEBUG: "true"
+      RELOAD: "false"
+      # MySQL 설정 (Docker 네트워크 내부 호스트명 사용)
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: seoul_bike
+      MYSQL_USER: hch16
+      MYSQL_PASSWORD: cksgh970216!
+      # Redis 설정
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Kafka 설정
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # 서울 API 키
+      SEOUL_API_KEY: ${SEOUL_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app:ro
+      - ./pipeline:/app/pipeline:ro
+    networks:
+      - bike-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 networks:
   bike-network:
