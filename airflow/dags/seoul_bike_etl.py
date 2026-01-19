@@ -37,7 +37,7 @@ dag = DAG(
     dag_id='seoul_bike_etl',
     default_args=default_args,
     description='서울 따릉이 데이터 수집 및 처리',
-    schedule_interval='*/10 * * * *',  # 10분마다 (데이터량 관리)
+    schedule_interval='*/30 * * * *',  # 30분마다
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['seoul', 'bike', 'etl', 'heatmap'],
@@ -207,7 +207,7 @@ def task_calculate_stats(**context):
             AVG(parking_bike_count) as avg_parking_count,
             COUNT(*) as sample_count
         FROM bike_status_history
-        WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 28 DAY)
+        WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
         GROUP BY station_id, HOUR(recorded_at), WEEKDAY(recorded_at)
         ON DUPLICATE KEY UPDATE
             avg_availability = VALUES(avg_availability),
@@ -230,24 +230,24 @@ def task_calculate_stats(**context):
 def task_cleanup_old_data(**context):
     """
     Task 5: 오래된 데이터 정리
-    - 28일(4주) 이상 된 bike_status_history 데이터 삭제
+    - 7일(1주) 이상 된 bike_status_history 데이터 삭제
     - 통계(bike_availability_stats)는 유지
     """
     mysql_hook = MySqlHook(mysql_conn_id='mysql_default')
     
     # 삭제 전 카운트
     before_count = mysql_hook.get_first(
-        "SELECT COUNT(*) FROM bike_status_history WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 28 DAY)"
+        "SELECT COUNT(*) FROM bike_status_history WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 7 DAY)"
     )
     rows_to_delete = before_count[0] if before_count else 0
     
     if rows_to_delete > 0:
-        logger.info(f"🗑️ Cleaning up {rows_to_delete} old records (older than 28 days/4 weeks)...")
+        logger.info(f"🗑️ Cleaning up {rows_to_delete} old records (older than 7 days/1 week)...")
         
-        # 28일(4주) 이상 된 데이터 삭제
+        # 7일(1주) 이상 된 데이터 삭제
         mysql_hook.run("""
             DELETE FROM bike_status_history 
-            WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 28 DAY)
+            WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
         """)
         
         logger.info(f"✅ Deleted {rows_to_delete} old records")

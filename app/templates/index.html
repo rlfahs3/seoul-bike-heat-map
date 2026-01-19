@@ -265,7 +265,7 @@
             <!-- 요일 선택 -->
             <h5 class="mb-3">
                 <i class="bi bi-calendar-week"></i> 요일별 시간대 대여 가능성
-                <small class="text-muted">(4주간 평균 데이터)</small>
+                <small class="text-muted">(1주간 평균 데이터)</small>
             </h5>
             
             <div class="day-selector" id="daySelector">
@@ -317,5 +317,5 @@
 
 {% block extra_js %}
 <!-- 요일별 히트맵 기능 추가 v=3 -->
-<script src="{{ url_for('static', path='/js/heatmap.js') }}?v=5"></script>
+<script src="/static/js/heatmap.js?v=6"></script>
 {% endblock %}
