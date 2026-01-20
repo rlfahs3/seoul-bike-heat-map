@@ -182,27 +182,39 @@ def task_calculate_stats(**context):
     - 현재 시간대(hour)와 요일(day_of_week)에 대해서만 통계 업데이트
     - 매번 전체 데이터를 스캔하지 않고, 최근 1시간 데이터만 처리
     """
+    from datetime import timedelta
+    from pytz import timezone
+    
     mysql_hook = MySqlHook(mysql_conn_id='mysql_default')
     
     logger.info("Calculating availability statistics...")
     
-    # 현재 KST 시간대와 요일 확인 (MySQL 서버가 UTC이므로 +9시간)
-    # recorded_at이 KST로 저장되어 있으므로 KST 기준으로 조회해야 함
-    time_info = mysql_hook.get_first("""
-        SELECT 
-            HOUR(DATE_ADD(NOW(), INTERVAL 9 HOUR)) as current_hour_kst,
-            WEEKDAY(DATE_ADD(NOW(), INTERVAL 9 HOUR)) as current_dow_kst,
-            DATE_ADD(NOW(), INTERVAL 9 HOUR) as now_kst
-    """)
-    current_hour = time_info[0]
-    current_dow = time_info[1]
-    now_kst = time_info[2]
+    # Airflow execution_date 기준으로 시간 계산 (재실행 시에도 원래 스케줄 시간 사용)
+    # data_interval_end가 실제 데이터 수집 시점을 나타냄
+    execution_date = context.get('data_interval_end') or context.get('execution_date')
     
-    logger.info(f"Current KST time: {now_kst}")
+    # UTC → KST 변환
+    kst = timezone('Asia/Seoul')
+    if execution_date.tzinfo is None:
+        from pytz import UTC
+        execution_date = UTC.localize(execution_date)
+    
+    execution_date_kst = execution_date.astimezone(kst)
+    
+    current_hour = execution_date_kst.hour
+    current_dow = execution_date_kst.weekday()
+    
+    logger.info(f"Execution date (UTC): {execution_date}")
+    logger.info(f"Execution date (KST): {execution_date_kst}")
     logger.info(f"Updating stats for hour={current_hour} (KST), day_of_week={current_dow}")
     
-    # 증분 업데이트: 현재 KST 시간대 + 요일에 대해서만 7일치 데이터로 통계 계산
-    # recorded_at은 KST로 저장되어 있음
+    # execution_date 기준 7일 전 날짜 계산
+    seven_days_ago_kst = execution_date_kst - timedelta(days=7)
+    cutoff_date_str = seven_days_ago_kst.strftime('%Y-%m-%d %H:%M:%S')
+    
+    logger.info(f"Data range: {cutoff_date_str} ~ {execution_date_kst.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # 증분 업데이트: execution_date 기준 시간대 + 요일에 대해서만 통계 계산
     sql = """
         INSERT INTO bike_availability_stats (
             station_id,
@@ -220,7 +232,7 @@ def task_calculate_stats(**context):
             AVG(parking_bike_count) as avg_parking_count,
             COUNT(*) as sample_count
         FROM bike_status_history
-        WHERE recorded_at >= DATE_SUB(DATE_ADD(NOW(), INTERVAL 9 HOUR), INTERVAL 7 DAY)
+        WHERE recorded_at >= %s
           AND HOUR(recorded_at) = %s
           AND WEEKDAY(recorded_at) = %s
         GROUP BY station_id, HOUR(recorded_at), WEEKDAY(recorded_at)
@@ -231,7 +243,7 @@ def task_calculate_stats(**context):
             last_updated = CURRENT_TIMESTAMP
     """
     
-    mysql_hook.run(sql, parameters=(current_hour, current_dow))
+    mysql_hook.run(sql, parameters=(cutoff_date_str, current_hour, current_dow))
     
     # 업데이트된 레코드 수 확인
     affected = mysql_hook.get_first("""
