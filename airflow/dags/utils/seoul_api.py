@@ -4,6 +4,7 @@
 import requests
 from typing import Dict, List, Optional
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,12 @@ class SeoulBikeAPI:
     """서울시 따릉이 실시간 대여정보 API 클라이언트"""
     
     BASE_URL = "http://openapi.seoul.go.kr:8088"
+    
+    # 타임아웃 및 재시도 설정
+    CONNECT_TIMEOUT = 30      # 연결 타임아웃 (초)
+    READ_TIMEOUT = 120        # 읽기 타임아웃 (2분)
+    MAX_RETRIES = 2           # 최대 재시도 횟수
+    RETRY_DELAY = 5           # 재시도 간격 (초)
     
     def __init__(self, api_key: str):
         """
@@ -36,27 +43,45 @@ class SeoulBikeAPI:
         """
         url = f"{self.BASE_URL}/{self.api_key}/json/bikeList/{start_index}/{end_index}/"
         
-        logger.info(f"Fetching bike data: {start_index}-{end_index}")
+        last_exception = None
         
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # API 에러 체크
-            if "RESULT" in data and data["RESULT"]["CODE"] != "INFO-000":
-                error_msg = data["RESULT"]["MESSAGE"]
-                raise ValueError(f"Seoul API Error: {error_msg}")
-            
-            return data
-            
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch bike data: {e}")
-            raise
-        except ValueError as e:
-            logger.error(f"Invalid API response: {e}")
-            raise
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                logger.info(f"Fetching bike data: {start_index}-{end_index} (attempt {attempt}/{self.MAX_RETRIES})")
+                
+                response = requests.get(
+                    url, 
+                    timeout=(self.CONNECT_TIMEOUT, self.READ_TIMEOUT)
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                # API 에러 체크
+                if "RESULT" in data and data["RESULT"]["CODE"] != "INFO-000":
+                    error_msg = data["RESULT"]["MESSAGE"]
+                    raise ValueError(f"Seoul API Error: {error_msg}")
+                
+                return data
+                
+            except (requests.Timeout, requests.ConnectionError) as e:
+                last_exception = e
+                logger.warning(f"Timeout/Connection error (attempt {attempt}/{self.MAX_RETRIES}): {e}")
+                
+                if attempt < self.MAX_RETRIES:
+                    logger.info(f"Waiting {self.RETRY_DELAY}s before retry...")
+                    time.sleep(self.RETRY_DELAY)
+                    
+            except requests.RequestException as e:
+                logger.error(f"Failed to fetch bike data: {e}")
+                raise
+            except ValueError as e:
+                logger.error(f"Invalid API response: {e}")
+                raise
+        
+        # 모든 재시도 실패
+        logger.error(f"All {self.MAX_RETRIES} attempts failed for {start_index}-{end_index}")
+        raise last_exception
             
     def fetch_all_bikes(self, batch_size: int = 1000) -> List[Dict]:
         """
@@ -68,8 +93,6 @@ class SeoulBikeAPI:
         Returns:
             전체 대여소 정보 리스트
         """
-        import time
-        
         all_bikes = []
         start_index = 1
         batch_num = 0
@@ -84,7 +107,7 @@ class SeoulBikeAPI:
             end_index = start_index + batch_size - 1
             
             try:
-                logger.info(f"📥 Batch #{batch_num}: Fetching {start_index} ~ {end_index}")
+                logger.info(f"Batch #{batch_num}: Fetching {start_index} ~ {end_index}")
                 data = self.fetch_bike_list(start_index, end_index)
                 
                 # rentBikeStatus.row에 실제 데이터가 있음
@@ -104,7 +127,7 @@ class SeoulBikeAPI:
                 logger.info(f"✅ Batch #{batch_num}: Got {fetched_count} stations | Total so far: {len(all_bikes)}")
                 
                 if fetched_count < batch_size:
-                    logger.info(f"🎉 Last batch detected (got {fetched_count} < {batch_size}). All stations fetched!")
+                    logger.info(f"Last batch detected (got {fetched_count} < {batch_size}). All stations fetched!")
                     break
                 
                 # 다음 배치로 이동
@@ -121,7 +144,7 @@ class SeoulBikeAPI:
                 break
         
         logger.info("=" * 50)
-        logger.info(f"📈 PAGINATION COMPLETE!")
+        logger.info(f"PAGINATION COMPLETE!")
         logger.info(f"   Total batches: {batch_num}")
         logger.info(f"   Total stations fetched: {len(all_bikes)}")
         logger.info("=" * 50)

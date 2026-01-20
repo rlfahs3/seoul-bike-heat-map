@@ -2,7 +2,7 @@
 Seoul Bike Heat Map - ETL DAG
 서울시 따릉이 실시간 정보를 수집하여 MySQL에 저장하고 통계를 계산하는 DAG
 
-실행 주기: 5분마다
+실행 주기: 30분마다
 """
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -178,18 +178,24 @@ def task_save_to_mysql(**context):
 
 def task_calculate_stats(**context):
     """
-    Task 4: 히트맵용 통계 계산
-    - bike_availability_stats 테이블 업데이트
+    Task 4: 히트맵용 통계 계산 (증분 업데이트)
+    - 현재 시간대(hour)와 요일(day_of_week)에 대해서만 통계 업데이트
+    - 매번 전체 데이터를 스캔하지 않고, 최근 1시간 데이터만 처리
     """
     mysql_hook = MySqlHook(mysql_conn_id='mysql_default')
     
     logger.info("Calculating availability statistics...")
     
-    # 스토어드 프로시저 호출 (전체 통계 재계산)
-    # 주의: 데이터가 많으면 시간이 오래 걸릴 수 있음
-    # 실제 운영에서는 증분 계산 로직 필요
+    # 현재 시간대와 요일 확인
+    time_info = mysql_hook.get_first("""
+        SELECT HOUR(NOW()) as current_hour, WEEKDAY(NOW()) as current_dow
+    """)
+    current_hour = time_info[0]
+    current_dow = time_info[1]
     
-    # 최근 업데이트된 대여소들만 통계 재계산
+    logger.info(f"Updating stats for hour={current_hour}, day_of_week={current_dow}")
+    
+    # 증분 업데이트: 현재 시간대 + 요일에 대해서만 7일치 데이터로 통계 계산
     sql = """
         INSERT INTO bike_availability_stats (
             station_id,
@@ -203,11 +209,13 @@ def task_calculate_stats(**context):
             station_id,
             HOUR(recorded_at) as hour_of_day,
             WEEKDAY(recorded_at) as day_of_week,
-            GREATEST(AVG(availability_rate), 0) as avg_availability,  -- 100% 초과 허용
+            GREATEST(AVG(availability_rate), 0) as avg_availability,
             AVG(parking_bike_count) as avg_parking_count,
             COUNT(*) as sample_count
         FROM bike_status_history
         WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+          AND HOUR(recorded_at) = %s
+          AND WEEKDAY(recorded_at) = %s
         GROUP BY station_id, HOUR(recorded_at), WEEKDAY(recorded_at)
         ON DUPLICATE KEY UPDATE
             avg_availability = VALUES(avg_availability),
@@ -216,15 +224,29 @@ def task_calculate_stats(**context):
             last_updated = CURRENT_TIMESTAMP
     """
     
-    mysql_hook.run(sql)
+    mysql_hook.run(sql, parameters=(current_hour, current_dow))
     
-    # 업데이트된 통계 개수 확인
-    result = mysql_hook.get_first("SELECT COUNT(*) as cnt FROM bike_availability_stats")
-    stats_count = result[0] if result else 0
+    # 업데이트된 레코드 수 확인
+    affected = mysql_hook.get_first("""
+        SELECT COUNT(*) FROM bike_availability_stats 
+        WHERE hour_of_day = %s AND day_of_week = %s
+    """, parameters=(current_hour, current_dow))
+    updated_count = affected[0] if affected else 0
     
-    logger.info(f"Statistics updated: {stats_count} records")
+    logger.info(f"Statistics updated: {updated_count} records for hour={current_hour}, dow={current_dow}")
     
-    return {'stats_count': stats_count}
+    # 전체 통계 개수도 확인
+    total = mysql_hook.get_first("SELECT COUNT(*) FROM bike_availability_stats")
+    total_count = total[0] if total else 0
+    
+    logger.info(f"Total stats records: {total_count}")
+    
+    return {
+        'updated_count': updated_count,
+        'total_count': total_count,
+        'hour': current_hour,
+        'day_of_week': current_dow
+    }
 
 
 def task_cleanup_old_data(**context):
@@ -302,11 +324,4 @@ cleanup_task = PythonOperator(
     dag=dag,
 )
 
-# ============================================
-# Task 의존성 설정
-# ============================================
-
 fetch_task >> process_task >> save_task >> stats_task >> cleanup_task
-
-# DAG 구조:
-# [API 호출] → [데이터 전처리] → [MySQL 저장] → [통계 계산] → [데이터 정리]
