@@ -186,16 +186,23 @@ def task_calculate_stats(**context):
     
     logger.info("Calculating availability statistics...")
     
-    # 현재 시간대와 요일 확인
+    # 현재 KST 시간대와 요일 확인 (MySQL 서버가 UTC이므로 +9시간)
+    # recorded_at이 KST로 저장되어 있으므로 KST 기준으로 조회해야 함
     time_info = mysql_hook.get_first("""
-        SELECT HOUR(NOW()) as current_hour, WEEKDAY(NOW()) as current_dow
+        SELECT 
+            HOUR(DATE_ADD(NOW(), INTERVAL 9 HOUR)) as current_hour_kst,
+            WEEKDAY(DATE_ADD(NOW(), INTERVAL 9 HOUR)) as current_dow_kst,
+            DATE_ADD(NOW(), INTERVAL 9 HOUR) as now_kst
     """)
     current_hour = time_info[0]
     current_dow = time_info[1]
+    now_kst = time_info[2]
     
-    logger.info(f"Updating stats for hour={current_hour}, day_of_week={current_dow}")
+    logger.info(f"Current KST time: {now_kst}")
+    logger.info(f"Updating stats for hour={current_hour} (KST), day_of_week={current_dow}")
     
-    # 증분 업데이트: 현재 시간대 + 요일에 대해서만 7일치 데이터로 통계 계산
+    # 증분 업데이트: 현재 KST 시간대 + 요일에 대해서만 7일치 데이터로 통계 계산
+    # recorded_at은 KST로 저장되어 있음
     sql = """
         INSERT INTO bike_availability_stats (
             station_id,
@@ -213,7 +220,7 @@ def task_calculate_stats(**context):
             AVG(parking_bike_count) as avg_parking_count,
             COUNT(*) as sample_count
         FROM bike_status_history
-        WHERE recorded_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        WHERE recorded_at >= DATE_SUB(DATE_ADD(NOW(), INTERVAL 9 HOUR), INTERVAL 7 DAY)
           AND HOUR(recorded_at) = %s
           AND WEEKDAY(recorded_at) = %s
         GROUP BY station_id, HOUR(recorded_at), WEEKDAY(recorded_at)
@@ -257,24 +264,26 @@ def task_cleanup_old_data(**context):
     """
     mysql_hook = MySqlHook(mysql_conn_id='mysql_default')
     
-    # 삭제 전 카운트
-    before_count = mysql_hook.get_first(
-        "SELECT COUNT(*) FROM bike_status_history WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 7 DAY)"
-    )
+    # KST 기준 7일 전 시점 계산
+    # recorded_at이 KST로 저장되어 있으므로 NOW()+9시간 기준으로 비교
+    before_count = mysql_hook.get_first("""
+        SELECT COUNT(*) FROM bike_status_history 
+        WHERE recorded_at < DATE_SUB(DATE_ADD(NOW(), INTERVAL 9 HOUR), INTERVAL 7 DAY)
+    """)
     rows_to_delete = before_count[0] if before_count else 0
     
     if rows_to_delete > 0:
-        logger.info(f"🗑️ Cleaning up {rows_to_delete} old records (older than 7 days/1 week)...")
+        logger.info(f"Cleaning up {rows_to_delete} old records (older than 7 days/1 week, KST)...")
         
-        # 7일(1주) 이상 된 데이터 삭제
+        # 7일(1주) 이상 된 데이터 삭제 (KST 기준)
         mysql_hook.run("""
             DELETE FROM bike_status_history 
-            WHERE recorded_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+            WHERE recorded_at < DATE_SUB(DATE_ADD(NOW(), INTERVAL 9 HOUR), INTERVAL 7 DAY)
         """)
         
-        logger.info(f"✅ Deleted {rows_to_delete} old records")
+        logger.info(f"Deleted {rows_to_delete} old records")
     else:
-        logger.info("📭 No old records to clean up")
+        logger.info("No old records to clean up")
     
     # 현재 테이블 상태
     current_count = mysql_hook.get_first("SELECT COUNT(*) FROM bike_status_history")
