@@ -414,54 +414,139 @@ class HeatmapService:
     def generate_recommendation(
         self,
         hourly_data: List[Dict[str, Any]],
-        current_hour: int
+        current_hour: int,
+        realtime_data: Dict[str, Any] = None
     ) -> str:
         """
-        추천 메시지 생성
+        추천 메시지 생성 (실시간 + 통계 비교)
         
         Args:
-            hourly_data: 시간대별 데이터
+            hourly_data: 시간대별 통계 데이터
             current_hour: 현재 시간
+            realtime_data: 실시간 데이터
         
         Returns:
             추천 메시지
         """
+        # 상태 우선순위
+        STATUS_LEVEL = {"high": 3, "medium": 2, "low": 1, "critical": 0}
+        
+        # 주간 시간대 정의 (7시 ~ 22시)
+        DAYTIME_HOURS = set(range(7, 23))
+        
+        # 가장 여유로운 시간대 찾기 (통계 기반)
+        best_hours = []
+        if hourly_data:
+            best_hours = [
+                d["hour"] for d in hourly_data 
+                if d["status"] == "high" and d["sample_count"] > 0
+            ]
+        
+        # 주간 시간대 중 여유로운 시간 필터링
+        daytime_best_hours = [h for h in best_hours if h in DAYTIME_HOURS]
+        
+        # 추천 시간대가 모두 새벽/밤 시간대인지 확인
+        def is_only_night_hours(hours: List[int]) -> bool:
+            if not hours:
+                return False
+            return all(h not in DAYTIME_HOURS for h in hours)
+        
+        # 추천 시간 문자열 생성 (주간 시간대 우선)
+        def get_recommend_hours_str(hours: List[int], limit: int = 3) -> str:
+            # 주간 시간대 우선
+            daytime = [h for h in hours if h in DAYTIME_HOURS]
+            if daytime:
+                return ', '.join(f'{h}시' for h in daytime[:limit])
+            # 주간 시간대가 없으면 전체에서 선택
+            return ', '.join(f'{h}시' for h in hours[:limit])
+        
+        # 통계 데이터에서 현재 시간대 상태 확인
+        stats_status = None
+        if hourly_data:
+            current_stats = next((d for d in hourly_data if d["hour"] == current_hour), None)
+            if current_stats and current_stats.get("sample_count", 0) > 0:
+                stats_status = current_stats.get("status")
+        
+        # 주간 시간대에 여유로운 시간이 전혀 없는지 확인
+        no_daytime_availability = best_hours and not daytime_best_hours
+        
+        # 실시간 데이터와 통계 데이터 비교
+        if realtime_data:
+            realtime_status = realtime_data.get("status", "unknown")
+            realtime_ratio = realtime_data.get("ratio", 0)
+            realtime_percentage = int(realtime_ratio * 100)
+            
+            realtime_level = STATUS_LEVEL.get(realtime_status, -1)
+            stats_level = STATUS_LEVEL.get(stats_status, -1) if stats_status else -1
+            
+            # 실시간 여유 (high/medium)
+            if realtime_level >= 2:
+                if stats_level >= 2:
+                    # 실시간 여유 + 통계 여유
+                    message = f"현재 자전거가 여유롭습니다! ({realtime_percentage}%) 지금 대여하기 좋은 시간입니다."
+                elif stats_level >= 0:
+                    # 실시간 여유 + 통계 부족
+                    message = f"현재는 여유롭지만 ({realtime_percentage}%), 평균적으로는 여유롭지 않은 시간대입니다. 서둘러 대여하세요!"
+                else:
+                    # 통계 데이터 없음
+                    message = f"현재 자전거가 여유롭습니다! ({realtime_percentage}%) 지금 대여하기 좋은 시간입니다."
+            
+            # 실시간 부족 (low/critical)
+            else:
+                # 주간 시간대에 여유로운 시간이 없는 경우 특별 메시지
+                if no_daytime_availability:
+                    message = f"현재 대여가 어렵고 ({realtime_percentage}%), 해당 대여소는 주간 시간대(7~22시)에 거의 대여가 불가능해 보입니다. 실시간 현황을 확인하여 이용하거나 근처 다른 대여소 이용을 추천드립니다."
+                elif stats_level >= 2:
+                    # 실시간 부족 + 통계 여유
+                    message = f"현재는 대여가 어렵지만 ({realtime_percentage}%), 평균적으로는 여유로운 시간대입니다. 잠시 후 다시 확인해보세요."
+                elif stats_level >= 0:
+                    # 실시간 부족 + 통계도 부족
+                    message = f"현재도 부족하고 ({realtime_percentage}%), 평균적으로도 부족한 시간대입니다."
+                    if daytime_best_hours:
+                        message += f" 추천 시간: {get_recommend_hours_str(best_hours)}"
+                    elif best_hours:
+                        # 추천 시간이 새벽/밤뿐이면 다른 대여소 권장
+                        message += " 주간 시간대에 여유로운 시간이 없어 다른 대여소를 고려하세요."
+                    else:
+                        message += " 다른 대여소를 고려하세요."
+                else:
+                    # 통계 데이터 없음
+                    if realtime_status == "low":
+                        message = f"현재 자전거가 부족합니다. ({realtime_percentage}%) 빨리 가거나 다른 대여소를 고려하세요."
+                    else:
+                        message = f"현재 자전거가 거의 없습니다. ({realtime_percentage}%) 다른 대여소를 이용하세요."
+                    if daytime_best_hours:
+                        message += f" 추천 시간: {get_recommend_hours_str(best_hours)}"
+            
+            return message
+        
+        # 실시간 데이터가 없으면 통계 기반으로만 판단
         if not hourly_data:
             return "데이터가 충분하지 않습니다."
         
-        current_data = next((d for d in hourly_data if d["hour"] == current_hour), None)
-        
-        if not current_data:
+        if not stats_status:
             return "현재 시간대 데이터가 없습니다."
         
-        status = current_data["status"]
+        # 주간 시간대에 여유로운 시간이 없는 경우 특별 메시지
+        if no_daytime_availability and stats_status in ["low", "critical"]:
+            return "해당 대여소는 주간 시간대(7~22시)에 거의 대여가 불가능해 보입니다. 실시간 현황을 확인하여 이용하거나 근처 다른 대여소 이용을 추천드립니다."
         
-        # 가장 여유로운 시간대 찾기
-        best_hours = [
-            d["hour"] for d in hourly_data 
-            if d["status"] == "high" and d["sample_count"] > 0
-        ]
-        
-        # 피해야 할 시간대 찾기
-        worst_hours = [
-            d["hour"] for d in hourly_data 
-            if d["status"] in ["critical", "low"] and d["sample_count"] > 0
-        ]
-        
-        if status == "high":
-            message = "현재 자전거가 여유롭습니다! 지금 대여하기 좋은 시간입니다."
-        elif status == "medium":
-            message = "현재 자전거가 보통입니다. 대여 가능하지만 서두르는 것이 좋습니다."
-            if best_hours:
-                message += f" 더 여유로운 시간: {', '.join(f'{h}시' for h in best_hours[:3])}"
-        elif status == "low":
-            message = "현재 자전거가 부족합니다. 빨리 가거나 다른 대여소를 고려하세요."
-            if best_hours:
-                message += f" 추천 시간: {', '.join(f'{h}시' for h in best_hours[:3])}"
-        else:  # critical
-            message = "현재 자전거가 거의 없습니다. 다른 대여소를 이용하세요."
-            if best_hours:
-                message += f" 여유로운 시간: {', '.join(f'{h}시' for h in best_hours[:3])}"
+        if stats_status == "high":
+            message = "평균적으로 이 시간대는 여유롭습니다! 대여하기 좋은 시간입니다."
+        elif stats_status == "medium":
+            message = "평균적으로 이 시간대는 보통입니다. 대여 가능하지만 서두르는 것이 좋습니다."
+            if daytime_best_hours:
+                message += f" 더 여유로운 시간: {get_recommend_hours_str(best_hours)}"
+        elif stats_status == "low":
+            message = "평균적으로 이 시간대는 부족합니다. 빨리 가거나 다른 대여소를 고려하세요."
+            if daytime_best_hours:
+                message += f" 추천 시간: {get_recommend_hours_str(best_hours)}"
+            elif best_hours:
+                message += " 주간 시간대에 여유로운 시간이 없어 다른 대여소를 고려하세요."
+        else:
+            message = "평균적으로 이 시간대는 자전거가 거의 없습니다. 다른 대여소를 이용하세요."
+            if daytime_best_hours:
+                message += f" 여유로운 시간: {get_recommend_hours_str(best_hours)}"
         
         return message
 

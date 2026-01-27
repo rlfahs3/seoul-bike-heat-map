@@ -115,7 +115,8 @@ async def get_full_availability(
         # 추천 메시지 생성
         recommendation = heatmap_service.generate_recommendation(
             heatmap_data["hourly_availability"],
-            datetime.now().hour
+            datetime.now().hour,
+            realtime_data
         )
         
         return StationAvailabilityFull(
@@ -153,7 +154,8 @@ async def get_recommendation(
         # 추천 메시지 생성
         message = heatmap_service.generate_recommendation(
             heatmap_data["hourly_availability"],
-            datetime.now().hour
+            datetime.now().hour,
+            realtime_data
         )
         
         # 피해야 할 시간대
