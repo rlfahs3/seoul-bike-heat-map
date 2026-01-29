@@ -212,6 +212,140 @@ class BikeService:
             raise
     
     
+    def get_nearby_stations(
+        self,
+        db: Session,
+        lat: float,
+        lng: float,
+        radius_km: float = 1.0,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        좌표 기반 근처 대여소 검색
+        Haversine 공식 사용
+
+        Args:
+            db: 데이터베이스 세션
+            lat: 위도
+            lng: 경도
+            radius_km: 검색 반경 (km)
+            limit: 최대 결과 수
+        
+        Returns:
+            근처 대여소 목록 (거리 포함)
+        """
+        try:
+            # Haversine 공식으로 거리 계산 (km 단위)
+            query = text("""
+                SELECT 
+                    s.station_id,
+                    s.station_name,
+                    s.latitude,
+                    s.longitude,
+                    s.rack_total_count,
+                    COALESCE(h.parking_bike_count, 0) as current_bikes,
+                    h.recorded_at as last_updated,
+                    (
+                        6371 * acos(
+                            cos(radians(:lat)) * cos(radians(s.latitude)) *
+                            cos(radians(s.longitude) - radians(:lng)) +
+                            sin(radians(:lat)) * sin(radians(s.latitude))
+                        )
+                    ) AS distance_km
+                FROM bike_stations s
+                LEFT JOIN (
+                    SELECT station_id, parking_bike_count, recorded_at
+                    FROM bike_status_history
+                    WHERE (station_id, recorded_at) IN (
+                        SELECT station_id, MAX(recorded_at)
+                        FROM bike_status_history
+                        GROUP BY station_id
+                    )
+                ) h ON s.station_id = h.station_id
+                HAVING distance_km <= :radius
+                ORDER BY distance_km ASC
+                LIMIT :limit
+            """)
+            
+            result = db.execute(query, {
+                "lat": lat,
+                "lng": lng,
+                "radius": radius_km,
+                "limit": limit
+            })
+            
+            stations = [
+                {
+                    "station_id": row[0],
+                    "station_name": row[1],
+                    "lat": float(row[2]) if row[2] else None,
+                    "lng": float(row[3]) if row[3] else None,
+                    "capacity": int(row[4]),
+                    "current_bikes": int(row[5]),
+                    "last_updated": row[6],
+                    "distance_km": round(float(row[7]), 2) if row[7] else None,
+                    "distance_m": round(float(row[7]) * 1000) if row[7] else None
+                }
+                for row in result.fetchall()
+            ]
+            
+            return stations
+            
+        except Exception as e:
+            logger.error(f"근처 대여소 검색 실패 (lat={lat}, lng={lng}): {e}")
+            raise
+    
+    def get_all_stations_for_map(
+        self,
+        db: Session
+    ) -> List[Dict[str, Any]]:
+        """
+        지도 표시용 모든 대여소 조회 (최소 정보만)
+        
+        Returns:
+            대여소 목록 (id, name, lat, lng, current_bikes, capacity)
+        """
+        try:
+            query = text("""
+                SELECT 
+                    s.station_id,
+                    s.station_name,
+                    s.latitude,
+                    s.longitude,
+                    s.rack_total_count,
+                    COALESCE(h.parking_bike_count, 0) as current_bikes
+                FROM bike_stations s
+                LEFT JOIN (
+                    SELECT station_id, parking_bike_count
+                    FROM bike_status_history
+                    WHERE (station_id, recorded_at) IN (
+                        SELECT station_id, MAX(recorded_at)
+                        FROM bike_status_history
+                        GROUP BY station_id
+                    )
+                ) h ON s.station_id = h.station_id
+                WHERE s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+            """)
+            
+            result = db.execute(query)
+            stations = [
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "lat": float(row[2]),
+                    "lng": float(row[3]),
+                    "capacity": int(row[4]),
+                    "bikes": int(row[5])
+                }
+                for row in result.fetchall()
+            ]
+            
+            return stations
+            
+        except Exception as e:
+            logger.error(f"지도용 대여소 목록 조회 실패: {e}")
+            raise
+    
     def get_station_history(
         self,
         db: Session,

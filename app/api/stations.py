@@ -84,6 +84,56 @@ async def search_stations(
         raise HTTPException(status_code=500, detail=f"검색 중 오류 발생: {str(e)}")
 
 
+@router.get("/nearby")
+async def get_nearby_stations(
+    lat: float = Query(..., description="위도"),
+    lng: float = Query(..., description="경도"),
+    radius: float = Query(1.0, ge=0.1, le=5.0, description="검색 반경 (km)"),
+    limit: int = Query(20, ge=1, le=50, description="최대 결과 수"),
+    db: Session = Depends(get_db)
+):
+    """
+    근처 스테이션 검색 (좌표 기반)
+    
+    주어진 좌표에서 반경 내의 따릉이 스테이션을 거리순으로 조회합니다.
+    """
+    try:
+        stations_data = bike_service.get_nearby_stations(db, lat, lng, radius, limit)
+        
+        return {
+            "lat": lat,
+            "lng": lng,
+            "radius_km": radius,
+            "count": len(stations_data),
+            "stations": stations_data
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"근처 스테이션 검색 중 오류 발생: {str(e)}")
+
+
+@router.get("/map/all")
+async def get_all_stations_for_map(
+    db: Session = Depends(get_db)
+):
+    """
+    지도 표시용 전체 스테이션 조회
+    
+    모든 따릉이 스테이션의 위치와 현재 자전거 수를 반환합니다.
+    지도에 마커를 표시하기 위한 API입니다.
+    """
+    try:
+        stations_data = bike_service.get_all_stations_for_map(db)
+        
+        return {
+            "count": len(stations_data),
+            "stations": stations_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"스테이션 조회 중 오류 발생: {str(e)}")
+
+
 @router.get("/{station_id}", response_model=StationResponse)
 async def get_station(
     station_id: str,
