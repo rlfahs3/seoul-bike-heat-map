@@ -252,7 +252,7 @@ services:
     environment:
       # 서버 설정
       HOST: "0.0.0.0"
-      PORT: "8000"
+      PORT: "1005"
       DEBUG: "true"
       RELOAD: "false"
       # MySQL 설정 (Docker 네트워크 내부 호스트명 사용)
@@ -269,7 +269,7 @@ services:
       # 서울 API 키
       SEOUL_API_KEY: ${SEOUL_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "1005:1005"
     volumes:
       - ./app:/app/app:ro
       - ./pipeline:/app/pipeline:ro
@@ -277,7 +277,7 @@ services:
       - bike-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:1005/health"]
       interval: 30s
       timeout: 10s
       retries: 3
