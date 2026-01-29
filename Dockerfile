@@ -21,7 +21,7 @@ COPY app /app/app
 COPY pipeline /app/pipeline
 
 # 포트 노출
-EXPOSE 8000
+EXPOSE 1005
 
 # 실행 명령
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "1005"]
